@@ -27,34 +27,6 @@ from folium.plugins import (
 )
 import json
 import os
-import streamlit_authenticator as stauth
-import yaml
-from yaml.loader import SafeLoader
-
-# 1. Define your users (In a real app, move this to a separate config.yaml file)
-config = {
-    'credentials': {
-        'usernames': {
-            'admin': {
-                'name': 'Shubham',
-                'password': 'Shubham@123', # In a real app, use a hashed password!
-                'email': 'admin@example.com'
-            }
-        }
-    },
-    'cookie': {
-        'expiry_days': 30,
-        'key': 'some_signature_key',
-        'name': 'some_cookie_name'
-    }
-}
-
-authenticator = stauth.Authenticate(
-    config['credentials'],
-    config['cookie']['name'],
-    config['cookie']['key'],
-    config['cookie']['expiry_days']
-)
 # ==========================================================
 # PAGE
 # ==========================================================
@@ -62,21 +34,6 @@ st.set_page_config(
     layout="wide",
     page_title="Soil Index "
 )
-name, authentication_status, username = authenticator.login('main')
-
-if authentication_status:
-    # ------------------------------------------------------
-    # PASTE ALL YOUR EXISTING CODE HERE (Indented by 4 spaces)
-    # ------------------------------------------------------
-    authenticator.logout('Logout', 'sidebar')
-    st.write(f'Welcome *{name}*')
-    
-    # ... rest of your map and GEE code ...
-
-elif authentication_status == False:
-    st.error('Username/password is incorrect')
-elif authentication_status == None:
-    st.warning('Please enter your username and password')
 # ==========================================================
 # AUTH (The Clean-Key Version)
 # ==========================================================
