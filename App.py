@@ -36,8 +36,8 @@ config = {
     'credentials': {
         'usernames': {
             'admin': {
-                'name': 'Admin User',
-                'password': 'abc', # In a real app, use a hashed password!
+                'name': 'Shubham',
+                'password': 'Shubham@123', # In a real app, use a hashed password!
                 'email': 'admin@example.com'
             }
         }
