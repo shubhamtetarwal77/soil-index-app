@@ -35,20 +35,24 @@ st.set_page_config(
     page_title="Soil Index "
 )
 # ==========================================================
-# AUTH (The "Final Boss" Version)
+# AUTH (The Clean-Key Version)
 # ==========================================================
 if "ee_initialized" not in st.session_state:
     try:
         if "gee_key" in st.secrets:
-            # WEB MODE: Using the standardized secret keys
+            # WEB MODE
             s = st.secrets["gee_key"]
+            
+            # This line fixes the PEM formatting error by ensuring newlines are real
+            clean_key = s["private_key"].replace("\\n", "\n")
+            
             credentials = ee.ServiceAccountCredentials(
                 s["client_email"],
-                key_data=s["private_key"] # Note: key_data is the correct modern argument
+                key_data=clean_key
             )
             ee.Initialize(credentials, project=s["project_id"])
         else:
-            # LOCAL MODE: Fallback to your local JSON file
+            # LOCAL MODE
             service_account = "soil-index@field-analytics-493911.iam.gserviceaccount.com"
             json_key = "field-analytics-493911-38f78a41b0d6.json"
             credentials = ee.ServiceAccountCredentials(service_account, json_key)
