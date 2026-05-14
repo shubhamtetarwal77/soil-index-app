@@ -35,20 +35,26 @@ st.set_page_config(
     page_title="Soil Index "
 )
 # ==========================================================
-# AUTH
+# AUTH (Web-Ready Version)
 # ==========================================================
 if "ee_initialized" not in st.session_state:
     try:
-        service_account = "soil-index@field-analytics-493911.iam.gserviceaccount.com"
-        json_key = "field-analytics-493911-38f78a41b0d6.json"
-        credentials = ee.ServiceAccountCredentials(
-            service_account,
-            json_key
-        )
-        ee.Initialize(
-            credentials,
-            project="field-analytics-493911"
-        )
+        if "gee_key" in st.secrets:
+            # This part runs when you are LIVE on the web
+            secret_data = st.secrets["gee_key"]
+            credentials = ee.ServiceAccountCredentials(
+                secret_data["client_email"],
+                None,
+                secret_data["project_id"],
+                private_key=secret_data["private_key"]
+            )
+            ee.Initialize(credentials, project=secret_data["project_id"])
+        else:
+            # This part runs when you are working LOCALLY
+            service_account = "soil-index@field-analytics-493911.iam.gserviceaccount.com"
+            json_key = "field-analytics-493911-38f78a41b0d6.json"
+            credentials = ee.ServiceAccountCredentials(service_account, json_key)
+            ee.Initialize(credentials, project="field-analytics-493911")
         st.session_state.ee_initialized = True
     except Exception as e:
         st.error(f"Earth Engine Error: {e}")
