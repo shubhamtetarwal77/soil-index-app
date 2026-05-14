@@ -35,20 +35,20 @@ st.set_page_config(
     page_title="Soil Index "
 )
 # ==========================================================
-# AUTH (Final Web-Ready Fix)
+# AUTH (The "Final Boss" Version)
 # ==========================================================
 if "ee_initialized" not in st.session_state:
     try:
         if "gee_key" in st.secrets:
-            # WEB MODE
-            secret_data = st.secrets["gee_key"]
-            # We use .from_json_keydict to handle the secret dictionary properly
-            credentials = ee.ServiceAccountCredentials.from_json_keydict(
-                dict(secret_data)
+            # WEB MODE: Using the standardized secret keys
+            s = st.secrets["gee_key"]
+            credentials = ee.ServiceAccountCredentials(
+                s["client_email"],
+                key_data=s["private_key"] # Note: key_data is the correct modern argument
             )
-            ee.Initialize(credentials, project=secret_data["project_id"])
+            ee.Initialize(credentials, project=s["project_id"])
         else:
-            # LOCAL MODE
+            # LOCAL MODE: Fallback to your local JSON file
             service_account = "soil-index@field-analytics-493911.iam.gserviceaccount.com"
             json_key = "field-analytics-493911-38f78a41b0d6.json"
             credentials = ee.ServiceAccountCredentials(service_account, json_key)
