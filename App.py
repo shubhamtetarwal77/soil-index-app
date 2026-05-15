@@ -42,7 +42,7 @@ st.set_page_config(
 # Change these to your own credentials
 
 USER_CREDENTIALS = {
-    "Shubham": "Shubham123",
+    "Shubham": "Shubham@123",
     "farmer": "soil2025",
     "demo": "demo123"
 }
