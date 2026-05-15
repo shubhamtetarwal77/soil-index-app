@@ -35,6 +35,79 @@ st.set_page_config(
     page_title="Soil Index "
 )
 # ==========================================================
+# LOGIN SYSTEM
+# ==========================================================
+
+# ---- USERNAME & PASSWORD ----
+# Change these to your own credentials
+
+USER_CREDENTIALS = {
+    "Shubham": "Shubham123",
+    "farmer": "soil2025",
+    "demo": "demo123"
+}
+
+# ---- SESSION STATE ----
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if "username" not in st.session_state:
+    st.session_state.username = ""
+
+# ==========================================================
+# LOGIN PAGE
+# ==========================================================
+
+def login_page():
+
+    st.title("🔐 Soil Index Login")
+
+    st.markdown("### Enter Username & Password")
+
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login", type="primary"):
+
+        if username in USER_CREDENTIALS and USER_CREDENTIALS[username] == password:
+
+            st.session_state.logged_in = True
+            st.session_state.username = username
+
+            st.success("Login Successful ✅")
+            st.rerun()
+
+        else:
+            st.error("Invalid Username or Password")
+
+# ==========================================================
+# LOGOUT BUTTON
+# ==========================================================
+
+def logout_button():
+
+    with st.sidebar:
+
+        st.markdown("---")
+        st.write(f"👤 Logged in as: **{st.session_state.username}**")
+
+        if st.button("🚪 Logout"):
+
+            st.session_state.logged_in = False
+            st.session_state.username = ""
+
+            st.rerun()
+
+# ==========================================================
+# LOGIN CHECK
+# ==========================================================
+
+if not st.session_state.logged_in:
+    login_page()
+    st.stop()
+
+logout_button()
+# ==========================================================
 # AUTH (The Clean-Key Version)
 # ==========================================================
 if "ee_initialized" not in st.session_state:
