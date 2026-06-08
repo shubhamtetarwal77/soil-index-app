@@ -176,6 +176,18 @@ INDEX_REGISTRY = {
     "NDWI": {"bands": ["B3", "B8"], "min": -1, "max": 1},
     "CCCI": {"bands": None, "min": 0, "max": 1},
 }
+# ADD THIS right after INDEX_REGISTRY dict
+INDEX_RESOLUTION = {
+    "NDVI":  10,
+    "NDWI":  10,
+    "GCI":   10,
+    "EVI":   10,
+    "MSAVI": 10,
+    "SAVI":  10,
+    "NDMI":  20,
+    "NDRE":  20,
+    "CCCI":  20,
+}
 # ==========================================================
 # INDEX-SPECIFIC THRESHOLDS
 # ==========================================================
@@ -394,7 +406,7 @@ with st.sidebar:
             sum(lats)/len(lats),
             sum(lons)/len(lons)
         ]
-        st.session_state.map_zoom = 17
+        st.session_state.map_zoom = 19
         # Show info
         for fname in selected_fields:
             st.write(f"📍 {fname}")
@@ -409,7 +421,7 @@ with st.sidebar:
             lat, lon = map(float, search_point.split(","))
             st.session_state.map_center = [lat, lon]
             # fly zoom style
-            st.session_state.map_zoom = 18
+            st.session_state.map_zoom = 19
             st.session_state.map_key += 1
             st.rerun()
         except:
@@ -435,7 +447,7 @@ with st.sidebar:
                 coords[0][1],
                 coords[0][0]
             ]
-            st.session_state.map_zoom = 17
+            st.session_state.map_zoom = 19
             st.session_state.map_key += 1
             st.success("Polygon Loaded")
             st.rerun()
@@ -456,9 +468,11 @@ zoom = st.session_state.map_zoom
 m = folium.Map(
     location=center,
     zoom_start=zoom,
+    max_zoom=22,
     control_scale=True,
     prefer_canvas=True,
-    zoom_control=True
+    zoom_control=True,
+    tiles=None
 )
 # ==========================================================
 # SAFETY CLEANUP (CRITICAL)
@@ -474,7 +488,9 @@ folium.TileLayer(
     name="Satellite",
     overlay=False,
     control=True,
-    show=True
+    show=True,
+    max_zoom=22,
+    max_native_zoom=22
 ).add_to(m)
 # ---------- HYBRID ----------
 folium.TileLayer(
@@ -483,7 +499,9 @@ folium.TileLayer(
     name="Hybrid",
     overlay=False,
     control=True,
-    show=False
+    show=False,
+    max_zoom=22,
+    max_native_zoom=22
 ).add_to(m)
 # ==========================================================
 # INDEX OVERLAY
@@ -552,7 +570,9 @@ if st.session_state.last_roi is not None:
         attr="GEE",
         name=f"{index_dropdown} Overlay",
         overlay=True,
-        control=True
+        control=True,
+        max_zoom=22,
+        max_native_zoom=22
     ).add_to(m)
 # ==========================================================
 # TOOLS
@@ -720,7 +740,8 @@ map_data = st_folium(
     returned_objects=[
         "all_drawings",
         "last_clicked"
-    ]
+    ],
+    zoom=st.session_state.map_zoom
 )
 st.session_state.map_data = map_data
 # Save current position silently (NO rerun)
@@ -768,7 +789,7 @@ if btn_spatial:
             sum(lats) / len(lats),
             sum(lons) / len(lons)
         ]
-        st.session_state.map_zoom = 17
+        st.session_state.map_zoom = 19
         st.session_state.map_key += 1
         st.success("Spatial Layer Generated")
         st.rerun()
