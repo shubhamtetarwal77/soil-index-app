@@ -179,7 +179,7 @@ def get_firestore_client():
     already stored in Streamlit Secrets for Earth Engine.
     """
 
-    s = st.secrets["gee_key"]
+    s = st.secrets["firestore_key"]
 
     service_account_info = {
         "type": "service_account",
