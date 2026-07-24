@@ -27,6 +27,10 @@ from folium.plugins import (
 )
 import json
 import os
+import hashlib
+
+from google.cloud import firestore
+from google.oauth2 import service_account
 # ==========================================================
 # PAGE
 # ==========================================================
@@ -85,16 +89,26 @@ def login_page():
 # ==========================================================
 
 def logout_button():
-
     with st.sidebar:
-
         st.markdown("---")
-        st.write(f"👤 Logged in as: **{st.session_state.username}**")
+
+        st.write(
+            f"👤 Logged in as: "
+            f"**{st.session_state.username}**"
+        )
 
         if st.button("🚪 Logout"):
-
             st.session_state.logged_in = False
             st.session_state.username = ""
+
+            # Remove the previous user's fields
+            st.session_state.pop("saved_fields", None)
+            st.session_state.pop("fields_loaded_for", None)
+
+            # Clear map field state
+            st.session_state.individual_rois = []
+            st.session_state.last_roi = None
+            st.session_state.show_layer = False
 
             st.rerun()
 
@@ -154,13 +168,251 @@ for k, v in defaults.items():
 # ===== RENAME MODE STATE =====
 if "rename_mode" not in st.session_state:
     st.session_state.rename_mode = False
-# ===== SAVED FIELDS STORAGE =====
-FILE_PATH = os.path.join(os.getcwd(), "saved_fields.json")
-if "saved_fields" not in st.session_state:
-    if os.path.exists(FILE_PATH):
-        with open(FILE_PATH, "r") as f:
-            st.session_state.saved_fields = json.load(f)
-    else:
+# ==========================================================
+# PERMANENT SAVED FIELD STORAGE - FIRESTORE
+# ==========================================================
+
+@st.cache_resource
+def get_firestore_client():
+    """
+    Connect to Firestore using the same service account
+    already stored in Streamlit Secrets for Earth Engine.
+    """
+
+    s = st.secrets["gee_key"]
+
+    service_account_info = {
+        "type": "service_account",
+        "project_id": s["project_id"],
+        "private_key": s["private_key"].replace("\\n", "\n"),
+        "client_email": s["client_email"],
+        "token_uri": s.get(
+            "token_uri",
+            "https://oauth2.googleapis.com/token"
+        ),
+    }
+
+    credentials = (
+        service_account.Credentials.from_service_account_info(
+            service_account_info
+        )
+    )
+
+    return firestore.Client(
+        project=s["project_id"],
+        credentials=credentials
+    )
+
+
+# Connect to Firestore
+db = get_firestore_client()
+
+
+def get_field_document_id(field_name):
+    """
+    Convert the field name into a safe Firestore document ID.
+    """
+
+    return hashlib.sha256(
+        field_name.encode("utf-8")
+    ).hexdigest()
+
+
+def get_user_fields_collection(username):
+    """
+    Return the Firestore collection for one user.
+
+    Every username gets a separate collection of fields.
+    """
+
+    return (
+        db.collection("soil_index_users")
+        .document(username)
+        .collection("fields")
+    )
+
+
+def get_user_history_collection(username):
+    """
+    Return the history collection for one user.
+    """
+
+    return (
+        db.collection("soil_index_users")
+        .document(username)
+        .collection("field_history")
+    )
+
+
+def load_saved_fields(username):
+    """
+    Load all permanently saved fields for the logged-in user.
+    """
+
+    fields = {}
+
+    documents = get_user_fields_collection(username).stream()
+
+    for document in documents:
+        data = document.to_dict()
+
+        field_name = data.get("field_name")
+
+        if field_name and data.get("geometry"):
+            fields[field_name] = {
+                "geometry": data["geometry"],
+                "area_acre": data.get("area_acre", 0),
+                "area_ha": data.get("area_ha", 0),
+            }
+
+    return fields
+
+
+def save_field_to_firestore(username, field_name, field_data):
+    """
+    Permanently save a field and create a history record.
+    """
+
+    document_id = get_field_document_id(field_name)
+
+    field_reference = (
+        get_user_fields_collection(username)
+        .document(document_id)
+    )
+
+    firestore_data = {
+        "field_name": field_name,
+        "geometry": field_data["geometry"],
+        "area_acre": field_data["area_acre"],
+        "area_ha": field_data["area_ha"],
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+
+    # Save the current version
+    field_reference.set(firestore_data)
+
+    # Save a history copy
+    get_user_history_collection(username).add({
+        "action": "saved",
+        "field_name": field_name,
+        "field_data": field_data,
+        "timestamp": firestore.SERVER_TIMESTAMP,
+    })
+
+
+def delete_field_from_firestore(
+    username,
+    field_name,
+    field_data
+):
+    """
+    Permanently delete a field, while keeping a history copy.
+    """
+
+    document_id = get_field_document_id(field_name)
+
+    field_reference = (
+        get_user_fields_collection(username)
+        .document(document_id)
+    )
+
+    history_reference = (
+        get_user_history_collection(username)
+        .document()
+    )
+
+    # Use a batch so history and deletion happen together
+    batch = db.batch()
+
+    batch.set(history_reference, {
+        "action": "deleted",
+        "field_name": field_name,
+        "field_data": field_data,
+        "timestamp": firestore.SERVER_TIMESTAMP,
+    })
+
+    batch.delete(field_reference)
+
+    batch.commit()
+
+
+def rename_field_in_firestore(
+    username,
+    old_name,
+    new_name,
+    field_data
+):
+    """
+    Permanently rename a field.
+    """
+
+    old_document_id = get_field_document_id(old_name)
+    new_document_id = get_field_document_id(new_name)
+
+    old_reference = (
+        get_user_fields_collection(username)
+        .document(old_document_id)
+    )
+
+    new_reference = (
+        get_user_fields_collection(username)
+        .document(new_document_id)
+    )
+
+    history_reference = (
+        get_user_history_collection(username)
+        .document()
+    )
+
+    batch = db.batch()
+
+    # Create the field using its new name
+    batch.set(new_reference, {
+        "field_name": new_name,
+        "geometry": field_data["geometry"],
+        "area_acre": field_data.get("area_acre", 0),
+        "area_ha": field_data.get("area_ha", 0),
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    })
+
+    # Delete the old-name document
+    batch.delete(old_reference)
+
+    # Save rename history
+    batch.set(history_reference, {
+        "action": "renamed",
+        "old_field_name": old_name,
+        "new_field_name": new_name,
+        "field_data": field_data,
+        "timestamp": firestore.SERVER_TIMESTAMP,
+    })
+
+    batch.commit()
+
+
+# ==========================================================
+# LOAD FIELDS WHEN USER LOGS IN
+# ==========================================================
+
+if (
+    st.session_state.get("fields_loaded_for")
+    != st.session_state.username
+):
+    try:
+        st.session_state.saved_fields = load_saved_fields(
+            st.session_state.username
+        )
+
+        st.session_state.fields_loaded_for = (
+            st.session_state.username
+        )
+
+    except Exception as e:
+        st.error(
+            "Could not load your permanently saved fields. "
+            f"Firestore error: {e}"
+        )
+
         st.session_state.saved_fields = {}
 # ==========================================================
 # INDEX CONFIG
@@ -345,42 +597,94 @@ with st.sidebar:
         if st.button("✏️", help="Rename Field"):
             st.session_state.rename_mode = True
     # ===== DELETE =====
+
     if selected_field and delete_clicked:
         if selected_field in st.session_state.saved_fields:
-            del st.session_state.saved_fields[selected_field]
-            with open(FILE_PATH, "w") as f:
-                json.dump(st.session_state.saved_fields, f, indent=2)
-            # ✅ CLEAR STALE STATE (IMPORTANT)
-            st.session_state.individual_rois = []
-            st.session_state.last_roi = None
-            st.success(f"{selected_field} deleted ✅")
-            st.rerun()
-        # RESET SPATIAL STATE IF NOTHING LEFT
-        if not st.session_state.saved_fields:
-            st.session_state.last_roi = None
-            st.session_state.individual_rois = []
-            st.session_state.show_layer = False
-            st.session_state.map_key += 1
-            st.rerun()
-    # ===== RENAME =====
+            try:
+                field_data = (
+                    st.session_state.saved_fields[selected_field]
+                )
+    
+                # Delete permanently from Firestore
+                delete_field_from_firestore(
+                    username=st.session_state.username,
+                    field_name=selected_field,
+                    field_data=field_data
+                )
+    
+                # Remove from current Streamlit session
+                del st.session_state.saved_fields[selected_field]
+    
+                # Clear old map state
+                st.session_state.individual_rois = []
+                st.session_state.last_roi = None
+                st.session_state.show_layer = False
+                st.session_state.map_key += 1
+    
+                st.success(f"{selected_field} deleted ✅")
+                st.rerun()
+    
+            except Exception as e:
+                st.error(f"Unable to delete field: {e}")
     # ===== RENAME MODE UI =====
+
     if selected_field and st.session_state.rename_mode:
-        new_name = st.text_input("Enter New Name")
+        new_name = st.text_input(
+            "Enter New Name",
+            key="rename_field_input"
+        ).strip()
+    
         col_r1, col_r2 = st.columns(2)
+    
         with col_r1:
             if st.button("✅ Save"):
                 if not new_name:
-                    st.warning("Enter new name")
+                    st.warning("Enter a new name")
+    
+                elif new_name == selected_field:
+                    st.warning(
+                        "The new name is the same as the old name."
+                    )
+    
                 elif new_name in st.session_state.saved_fields:
-                    st.warning("Name already exists")
+                    st.warning("That field name already exists")
+    
                 else:
-                    st.session_state.saved_fields[new_name] = \
-                        st.session_state.saved_fields.pop(selected_field)
-                    with open(FILE_PATH, "w") as f:
-                        json.dump(st.session_state.saved_fields, f, indent=2)
-                    st.success(f"Renamed to {new_name} ✅")
-                    st.session_state.rename_mode = False
-                    st.rerun()
+                    try:
+                        field_data = (
+                            st.session_state.saved_fields[
+                                selected_field
+                            ]
+                        )
+    
+                        # Rename permanently in Firestore
+                        rename_field_in_firestore(
+                            username=st.session_state.username,
+                            old_name=selected_field,
+                            new_name=new_name,
+                            field_data=field_data
+                        )
+    
+                        # Update current Streamlit session
+                        st.session_state.saved_fields[new_name] = (
+                            st.session_state.saved_fields.pop(
+                                selected_field
+                            )
+                        )
+    
+                        st.session_state.rename_mode = False
+    
+                        st.success(
+                            f"Renamed to {new_name} ✅"
+                        )
+    
+                        st.rerun()
+    
+                    except Exception as e:
+                        st.error(
+                            f"Unable to rename field: {e}"
+                        )
+    
         with col_r2:
             if st.button("❌ Cancel"):
                 st.session_state.rename_mode = False
@@ -823,26 +1127,64 @@ elif st.session_state.individual_rois:
 # ==========================================================
 # SAVE FIELD
 # ==========================================================
+
 if map_data and map_data.get("all_drawings"):
     drawings = map_data["all_drawings"]
+
     st.subheader("💾 Save Field")
-    field_name = st.text_input("Enter Field Name")
+
+    field_name = st.text_input(
+        "Enter Field Name",
+        key="new_field_name"
+    ).strip()
+
     if st.button("Save This Field"):
         if not field_name:
-            st.warning("Enter a name")
+            st.warning("Enter a field name")
+
+        elif field_name in st.session_state.saved_fields:
+            st.warning(
+                "A field with this name already exists. "
+                "Please use another name."
+            )
+
         else:
-            geom = ee.Geometry(drawings[-1]["geometry"])
-            area = geom.area().getInfo()
-            acre = area / 4046.85642
-            ha = area / 10000
-            st.session_state.saved_fields[field_name] = {
-                "geometry": drawings[-1]["geometry"],
-                "area_acre": round(acre, 2),
-                "area_ha": round(ha, 2)
-            }
-            with open(FILE_PATH, "w") as f:
-                json.dump(st.session_state.saved_fields, f, indent=2)
-            st.success(f"Field '{field_name}' saved ✅")
+            try:
+                geometry_data = drawings[-1]["geometry"]
+
+                geom = ee.Geometry(geometry_data)
+
+                area = geom.area().getInfo()
+                acre = area / 4046.85642
+                ha = area / 10000
+
+                field_data = {
+                    "geometry": geometry_data,
+                    "area_acre": round(acre, 2),
+                    "area_ha": round(ha, 2),
+                }
+
+                # Save permanently in Firestore
+                save_field_to_firestore(
+                    username=st.session_state.username,
+                    field_name=field_name,
+                    field_data=field_data
+                )
+
+                # Update current Streamlit session
+                st.session_state.saved_fields[field_name] = (
+                    field_data
+                )
+
+                st.success(
+                    f"Field '{field_name}' "
+                    "saved permanently ✅"
+                )
+
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Unable to save field: {e}")
 # ==========================================================
 # INSPECTOR CLICK
 # ==========================================================
