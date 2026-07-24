@@ -174,17 +174,31 @@ if "rename_mode" not in st.session_state:
 
 @st.cache_resource
 def get_firestore_client():
-    """
-    Connect to Firestore using the same service account
-    already stored in Streamlit Secrets for Earth Engine.
-    """
-
     s = st.secrets["firestore_key"]
+
+    clean_private_key = (
+        str(s["private_key"])
+        .strip()
+        .replace("\\n", "\n")
+        + "\n"
+    )
+
+    if not clean_private_key.startswith(
+        "-----BEGIN PRIVATE KEY-----"
+    ):
+        raise ValueError(
+            "Firestore private key does not start correctly."
+        )
+
+    if "-----END PRIVATE KEY-----" not in clean_private_key:
+        raise ValueError(
+            "Firestore private key does not end correctly."
+        )
 
     service_account_info = {
         "type": "service_account",
         "project_id": s["project_id"],
-        "private_key": s["private_key"].replace("\\n", "\n"),
+        "private_key": clean_private_key,
         "client_email": s["client_email"],
         "token_uri": s.get(
             "token_uri",
