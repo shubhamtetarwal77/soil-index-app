@@ -261,6 +261,9 @@ def get_user_history_collection(username):
 def load_saved_fields(username):
     """
     Load all permanently saved fields for the logged-in user.
+
+    Polygon geometry is stored as a JSON string because Firestore
+    does not support the nested coordinate arrays used by GeoJSON.
     """
 
     fields = {}
@@ -271,13 +274,24 @@ def load_saved_fields(username):
         data = document.to_dict()
 
         field_name = data.get("field_name")
+        geometry_json = data.get("geometry_json")
 
-        if field_name and data.get("geometry"):
+        if not field_name or not geometry_json:
+            continue
+
+        try:
+            # Convert stored JSON text back into a GeoJSON dictionary
+            geometry = json.loads(geometry_json)
+
             fields[field_name] = {
-                "geometry": data["geometry"],
+                "geometry": geometry,
                 "area_acre": data.get("area_acre", 0),
                 "area_ha": data.get("area_ha", 0),
             }
+
+        except (json.JSONDecodeError, TypeError):
+            # Ignore an invalid database record
+            continue
 
     return fields
 
@@ -294,22 +308,34 @@ def save_field_to_firestore(username, field_name, field_data):
         .document(document_id)
     )
 
+    # Convert the GeoJSON dictionary into text
+    geometry_json = json.dumps(
+        field_data["geometry"],
+        ensure_ascii=False
+    )
+
+    # Convert all field data into text for the history collection
+    field_data_json = json.dumps(
+        field_data,
+        ensure_ascii=False
+    )
+
     firestore_data = {
         "field_name": field_name,
-        "geometry": field_data["geometry"],
+        "geometry_json": geometry_json,
         "area_acre": field_data["area_acre"],
         "area_ha": field_data["area_ha"],
         "updated_at": firestore.SERVER_TIMESTAMP,
     }
 
-    # Save the current version
+    # Save the current field version
     field_reference.set(firestore_data)
 
-    # Save a history copy
+    # Save a separate history copy
     get_user_history_collection(username).add({
         "action": "saved",
         "field_name": field_name,
-        "field_data": field_data,
+        "field_data_json": field_data_json,
         "timestamp": firestore.SERVER_TIMESTAMP,
     })
 
@@ -320,7 +346,7 @@ def delete_field_from_firestore(
     field_data
 ):
     """
-    Permanently delete a field, while keeping a history copy.
+    Permanently delete a field while retaining a history copy.
     """
 
     document_id = get_field_document_id(field_name)
@@ -335,13 +361,18 @@ def delete_field_from_firestore(
         .document()
     )
 
-    # Use a batch so history and deletion happen together
+    # Store history as JSON text to prevent the nested-array error
+    field_data_json = json.dumps(
+        field_data,
+        ensure_ascii=False
+    )
+
     batch = db.batch()
 
     batch.set(history_reference, {
         "action": "deleted",
         "field_name": field_name,
-        "field_data": field_data,
+        "field_data_json": field_data_json,
         "timestamp": firestore.SERVER_TIMESTAMP,
     })
 
@@ -378,18 +409,29 @@ def rename_field_in_firestore(
         .document()
     )
 
+    # Store nested polygon information as JSON text
+    geometry_json = json.dumps(
+        field_data["geometry"],
+        ensure_ascii=False
+    )
+
+    field_data_json = json.dumps(
+        field_data,
+        ensure_ascii=False
+    )
+
     batch = db.batch()
 
-    # Create the field using its new name
+    # Create the document with the new field name
     batch.set(new_reference, {
         "field_name": new_name,
-        "geometry": field_data["geometry"],
+        "geometry_json": geometry_json,
         "area_acre": field_data.get("area_acre", 0),
         "area_ha": field_data.get("area_ha", 0),
         "updated_at": firestore.SERVER_TIMESTAMP,
     })
 
-    # Delete the old-name document
+    # Delete the document with the old field name
     batch.delete(old_reference)
 
     # Save rename history
@@ -397,7 +439,7 @@ def rename_field_in_firestore(
         "action": "renamed",
         "old_field_name": old_name,
         "new_field_name": new_name,
-        "field_data": field_data,
+        "field_data_json": field_data_json,
         "timestamp": firestore.SERVER_TIMESTAMP,
     })
 
